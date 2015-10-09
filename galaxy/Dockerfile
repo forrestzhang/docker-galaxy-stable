@@ -64,6 +64,10 @@ RUN mkdir -p $GALAXY_CONFIG_DIR $GALAXY_CONFIG_DIR/web && chown -R $GALAXY_USER:
 
 RUN su $GALAXY_USER -c "cp $GALAXY_ROOT/config/galaxy.ini.sample $GALAXY_CONFIG_FILE"
 ADD ./reports_wsgi.ini.sample $GALAXY_CONFIG_DIR/reports_wsgi.ini
+RUN sed -i -- 's/#enable_data_manager_user_view = False/enable_data_manager_user_view = True/g' $GALAXY_CONFIG_FILE
+RUN sed -i -- 's/#data_manager_config_file/data_manager_config_file/g' $GALAXY_CONFIG_FILE
+RUN sed -i -- 's/#shed_data_manager_config_file/shed_data_manager_config_file/g' $GALAXY_CONFIG_FILE
+RUN sed -i -- 's/#galaxy_data_manager_data_path/galaxy_data_manager_data_path/g' $GALAXY_CONFIG_FILE
 ADD ./htpasswd /etc/nginx/htpasswd
 ADD ./servers.ini $GALAXY_CONFIG_DIR/servers.ini
 RUN cat $GALAXY_CONFIG_DIR/servers.ini >> $GALAXY_CONFIG_FILE && rm $GALAXY_CONFIG_DIR/servers.ini
