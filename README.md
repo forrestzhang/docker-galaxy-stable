@@ -169,6 +169,13 @@ In addition you start/stop every supersisord process using a webinterface on por
   docker run -p 9002:9002 bgruening/galaxy-stable
   ```
 
+Data Manager
+-------------
+If you wanna use Data Manager in admin panel. you need restart galaxy.
+```sh
+docker exec <container name> supervisorctl restart galaxy:
+```
+
 Advanced Logging
 ----------------
 
