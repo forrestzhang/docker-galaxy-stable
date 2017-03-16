@@ -1,0 +1,109 @@
+sudo: required
+
+language: python
+python: 2.7
+
+services:
+  - docker
+
+env:
+  matrix:
+    - TOX_ENV=py27
+    - COMPOSE=True
+  global:
+    - secure: "PgEA6vDYZWAIZ3KyUTeA9SNSNR+eJU3kBkoEIsTnmnkyta0Z0VbIv98B9ApYeiC0VHpVzY1gblimmkXSY5+4oD9tUxpA630cUhE9iLNuo5o3MpRFun8nf8H6Jz2Y/PaPw3VPLKsH49LJYgJXeqgzoV7FHrpUP9Q3/5dycWybV2I="
+
+git:
+  submodules: false
+
+before_install:
+  - export GALAXY_HOME=/home/galaxy
+  - export GALAXY_USER=admin@galaxy.org
+  - export GALAXY_USER_EMAIL=admin@galaxy.org
+  - export GALAXY_USER_PASSWD=admin
+  - export BIOBLEND_GALAXY_API_KEY=admin
+  - export BIOBLEND_GALAXY_URL=http://localhost:8080
+
+  - sudo apt-get update -qq
+  - sudo apt-get install docker-engine --no-install-recommends -y -o Dpkg::Options::="--force-confmiss" -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew"
+  - sudo apt-get install sshpass --no-install-recommends -y
+
+  - docker --version
+  - docker info
+
+  - git submodule update --init --recursive
+  - docker build -t quay.io/bgruening/galaxy galaxy/
+  - sudo chown 1450 /tmp && sudo chmod a=rwx /tmp
+
+  - |
+    if [ "${COMPOSE}" ]
+    then
+        pip install docker-compose
+        cd compose
+        ./buildlocal.sh
+        docker-compose --project-name galaxy_compose up -d
+        sleep 50
+    else
+        mkdir local_folder
+        docker run -d -p 8080:80 -p 8021:21 -p 8022:22 \
+            --name galaxy \
+            --privileged=true \
+            -v `pwd`/local_folder:/export/ \
+            -e GALAXY_CONFIG_ALLOW_USER_DATASET_PURGE=True \
+            -e GALAXY_CONFIG_ALLOW_LIBRARY_PATH_PASTE=True \
+            -e GALAXY_CONFIG_ENABLE_USER_DELETION=True \
+            -e GALAXY_CONFIG_ENABLE_BETA_WORKFLOW_MODULES=True \
+            -v /tmp/:/tmp/ \
+            quay.io/bgruening/galaxy
+    fi
+  - sleep 10
+  - docker ps
+
+script:
+  # Test submitting jobs to an external slurm cluster
+  - |
+      if ! [ "${COMPOSE}" ]
+      then
+        cd $TRAVIS_BUILD_DIR/test/slurm/ && bash test.sh && cd $TRAVIS_BUILD_DIR
+      fi
+  # Test submitting jobs to an external gridengine cluster
+  - cd $TRAVIS_BUILD_DIR/test/gridengine/ && bash test.sh && cd $TRAVIS_BUILD_DIR
+  # Test FTP Server
+  - curl -v --fail $BIOBLEND_GALAXY_URL/api/version
+  - date > time.txt && curl -v --fail -T time.txt ftp://localhost:8021 --user $GALAXY_USER:$GALAXY_USER_PASSWD
+  - curl -v --fail ftp://localhost:8021 --user $GALAXY_USER:$GALAXY_USER_PASSWD
+
+  # Test SFTP Server
+  - sshpass -p $GALAXY_USER_PASSWD sftp -v -P 8022 -o User=$GALAXY_USER -o "StrictHostKeyChecking no" localhost <<< $'put time.txt'
+  # Test self-signed HTTPS
+  - docker run -d -p 443:443 -e "USE_HTTPS=True" quay.io/bgruening/galaxy
+  - sleep 60s && curl -v -k --fail https://127.0.0.1:443/api/version
+  - echo | openssl s_client -connect 127.0.0.1:443 2>/dev/null | openssl x509 -issuer -noout| grep selfsigned
+
+  - cd $TRAVIS_BUILD_DIR/test/bioblend/ && bash test.sh && cd $TRAVIS_BUILD_DIR/
+  # Test the 'old' tool installation script
+  - docker run quay.io/bgruening/galaxy bash -c 'install-repository "--url https://toolshed.g2.bx.psu.edu -o iuc --name bedtools --panel-section-name 'BEDTools'"'
+  # Test the 'new' tool installation script
+  - docker run quay.io/bgruening/galaxy bash -c "install-tools $GALAXY_HOME/ephemeris/sample_tool_list.yaml"
+  # Test Docker in Docker, used by Interactive Environments; This needs to be at the end as Docker takes some time to start.
+  - docker exec -i -t galaxy docker info
+  - docker stop galaxy
+  # Test the Conda installation
+  - docker run -i -t quay.io/bgruening/galaxy bash -c 'export PATH=/tool_deps/_conda/bin/:$PATH && conda --version && conda install samtools -c bioconda --yes'
+
+after_success:
+  - |
+    if [ "$TRAVIS_PULL_REQUEST" == "false" -a "$TRAVIS_BRANCH" == "master" ]
+    then
+      echo "Generate and deploy html documentation"
+      ./docs/bin/deploy_docs
+    fi
+
+
+notifications:
+  webhooks:
+    urls:
+      - https://webhooks.gitter.im/e/559f5480ac7a4ef238af
+    on_success: change
+    on_failure: always
+    on_start: never
